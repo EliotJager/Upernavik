@@ -1,0 +1,411 @@
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+! 
+! Author: F. Gillet-Chaulet (IGE-Grenoble-FR)
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!#######################################################
+include Physical_ParamsES.IN
+
+!# Parameters
+! name of the simulation
+$name="<NAME>"
+! name of the input
+$input="<INPUT>"
+! mesh directory name
+$MESH="MESH_0"
+! minimal ice thickness
+$HMin=0.9
+
+! Data sets to be included on the mesh
+$MASK_NODES="./DATA/Upernavik_IceMask_Eliot_1985-2019.nc"
+
+! 1 year of simulation
+$Iter = 35*yearinday
+$dt = 1/(yearinday+0.00000001)
+$NoutPut = yearinday ! all years
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+Header
+  Mesh DB "." "$MESH$"
+End
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+Constants
+  sea level = Real $zsl
+  water density = Real $rhow
+End
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+Simulation
+  Coordinate System  = Cartesian 2D 
+
+  Simulation Type = Transient
+
+  Timestepping Method = "bdf"
+  BDF Order = 2
+  
+  Output Intervals(1) = $NoutPut
+  Timestep Intervals(1) = $Iter
+  Timestep Sizes(1) = $dt
+
+  Steady State Min Iterations = 1
+  Steady State Max Iterations = 3
+
+  OutPut File = "$name$.result"
+  Post File = "$name$.vtu"
+  vtu: Vtu Time Collection = Logical True
+
+  Restart File = "$input$.result"
+  Restart Position = 0
+  Restart Time = Real 0.0
+
+  max output level = 3
+End
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+Body 1
+  Equation = 1
+  Material = 1
+  Body Force = 1
+End
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+Body Force 1
+  Flow BodyForce 1 = Real 0.0
+  Flow BodyForce 2 = Real 0.0
+  Flow BodyForce 3 = Real $gravity
+
+  Top Surface Accumulation = Equals smb
+  Bottom Surface Accumulation = Real 0.0
+  
+  SSAVelocity Passive = Variable Distance, zb
+    REAL procedure "PASSIVE" "passive_mask_old"
+
+  H Passive = Variable Distance, zb
+    REAL procedure "PASSIVE" "passive_mask_old"
+
+  Normal Vector Passive = Variable Distance, zb 
+    REAL procedure "PASSIVE" "passive_mask_old"
+
+  H Condition Passive = Logical True
+
+  SSAVelocity 1 = Real 0.0
+  SSAVelocity 1 Condition Passive = Logical True
+  SSAVelocity 2 = Real 0.0
+  SSAVelocity 2 Condition Passive = Logical True
+
+  Passive Element Min nodes = Integer 1
+  
+  Distance1p = Real 0.0
+  Distance1p Condition = Variable mask_nodes1
+    Real procedure "DISTANCE" "DistanceCond"
+
+  Distance2p = Real 0.0
+  Distance2p Condition = Variable mask_nodes2
+    Real procedure "DISTANCE" "DistanceCond"
+
+  Distance1n = Real 0.0
+  Distance1n Condition = Variable inv_mask1
+    Real procedure "DISTANCE" "DistanceCond"
+
+  Distance2n = Real 0.0
+  Distance2n Condition = Variable inv_mask2
+    Real procedure "DISTANCE" "DistanceCond"
+
+  Distance1 = Variable Distance1p, Distance1n
+    Real procedure "DISTANCE" "DISTANCE_DIFF"
+
+  Distance2 = Variable Distance2p, Distance2n
+    Real procedure "DISTANCE" "DISTANCE_DIFF"
+
+  inv_mask1 = Variable mask_nodes1
+    REAL procedure "PASSIVE" "INV_MASK"
+  
+  inv_mask2 = Variable mask_nodes2
+    REAL procedure "PASSIVE" "INV_MASK"
+  
+  distance = Variable Time, Distance1, Distance2 
+    REAL procedure "DISTANCE" "DISTANCE_ANOM"
+
+    
+!! we compute Taub because it's important
+  Taub = Variable SlipCoef, SSAVelocity 1, SSAVelocity 2
+  Real Procedure "SlipCoef" "CalculTaub"
+
+End
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+Material 1
+! Material properties
+  Viscosity Exponent = Real $1/n
+  Critical Shear Rate = Real 1.0e-16
+
+  SSA Mean Viscosity = Equals Mu
+  SSA Mean Density = Real $rhoi
+  SSA Critical Thickness = Real $HMin
+
+! slip coeff for the SSA
+   SSA Friction Law = String "weertman"
+   SSA Friction Parameter = Equals SlipCoef
+   SSA Friction Exponent = Real $m
+   SSA Friction Linear Velocity = Real 1.0e-3
+
+!! Min Value for H
+   Min H = Real $HMin
+
+End
+!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+Solver 1
+ Exec Solver = Before Timestep 
+ 
+ ! exec every year to run annual values
+ Exec Interval = $floor(1.0/dt) 
+ 
+ Equation = Reader1
+  Procedure = "GridDataReader" "GridDataReader"
+  
+!---- 
+  Filename = File "$MASK_NODES$"
+!---
+  X Dim Name = File "x"
+  Y Dim Name = File "y"
+  Time Dim Name = File "time"
+!--- 
+ Variable 1 = File "Ice_Mask"
+ Target Variable 1 = String "mask_nodes1"
+!----
+ ! simulation time is converted in netcdf time index
+ ! i.e. if time=[0,1[ read time(1), etc...
+ Is Time Index = Logical True
+ Time Point = Variable Time
+  REAL MATC "floor(tx)+1"
+End
+!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+Solver 2
+ Exec Solver = Before Timestep 
+ 
+ ! exec every year to run annual values
+ Exec Interval = $floor(1.0/dt) 
+ 
+ Equation = Reader2
+  Procedure = "GridDataReader" "GridDataReader"
+  
+!---- 
+  Filename = File "$MASK_NODES$"
+!---
+  X Dim Name = File "x"
+  Y Dim Name = File "y"
+  Time Dim Name = File "time"
+!--- 
+ Variable 1 = File "Ice_Mask"
+ Target Variable 1 = String "mask_nodes2"
+!----
+ ! simulation time is converted in netcdf time index
+ ! i.e. if time=[0,1[ read time(1), etc...
+ Is Time Index = Logical True
+ Time Point = Variable Time
+  REAL MATC "floor(tx)+2"
+End
+!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+Solver 3
+   Exec Solver = Before Timestep
+   Equation = "UpdateInvMask"
+   Procedure = "ElmerIceSolvers" "UpdateExport"
+    Variable = -nooutput "dumyUP"
+
+    Exported Variable 1 = "inv_mask1"
+    Exported Variable 2 = "inv_mask2"
+End
+!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+Solver 4
+ Exec Solver = Before Timestep 
+  Equation = "Distance1p"
+  Variable =  distance1p
+    Procedure = "DistanceSolve" "DistanceSolver1"
+    Optimize Bandwidth = logical false
+End
+!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+Solver 5
+ Exec Solver = Before Timestep 
+  Equation = "Distance1n"
+    
+  Variable =  distance1n
+    Procedure = "DistanceSolve" "DistanceSolver1"
+    Optimize Bandwidth = logical false
+End
+!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+Solver 6
+ Exec Solver = Before Timestep 
+  Equation = "Distance2p"
+
+  Variable =  distance2p
+    Procedure = "DistanceSolve" "DistanceSolver1"
+    Optimize Bandwidth = logical false
+End
+!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+Solver 7
+ Exec Solver = Before Timestep 
+  Equation = "Distance2n"
+    
+  Variable =  distance2n
+    Procedure = "DistanceSolve" "DistanceSolver1"
+    Optimize Bandwidth = logical false
+End
+!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+Solver 8
+   Exec Solver = Before Timestep
+   Equation = "UpdateExport1"
+   Procedure = "ElmerIceSolvers" "UpdateExport"
+    Variable = -nooutput "dumyUP"
+
+    Exported Variable 1 = "distance1"
+    Exported Variable 2 = "distance2"
+    Exported Variable 3 = -dofs 1 "distance"
+End
+!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+Solver 9
+   Exec Solver = Before Timestep
+   Equation = "Normal vector"
+   Variable = "Normal Vector"
+   ! in 3dimensional simulations we have 3 entries
+   Variable DOFs = 2
+   !NB: does not need to actually solve a matrix
+   !    hence no BW optimization needed
+   Optimize Bandwidth = Logical False
+   Procedure = "ElmerIceSolvers" "ComputeNormalSolver"
+   ! if set to True, all boundary normals would be computed by default
+   ComputeAll = Logical False
+End
+
+!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+Solver 10
+   Equation = "Flotation"
+   Variable = GroundedMask
+      Procedure = "ElmerIceSolvers" "Flotation"
+End
+!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+Solver 11
+  Equation = "SSA"
+  Variable = -dofs 2 "SSAVelocity"
+   Procedure = "ElmerIceSolvers" "SSABasalSolver"
+
+ ! Numerical settings;
+  Linear System Solver = Direct
+  Linear System Direct Method = umfpack
+
+  Nonlinear System Max Iterations = 20
+  Nonlinear System Convergence Tolerance  = 1.0e-05
+  Nonlinear System Newton After Iterations = 5
+  Nonlinear System Newton After Tolerance = 1.0e-04
+  Nonlinear System Relaxation Factor = 1.00
+
+  Steady State convergence Tolerance = 1.0e-04
+  
+ ! GL subgrid scheme
+  Sub-Element GL parameterization = logical True
+  GL integration points number = Integer 20
+End
+!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+Solver 12
+   Equation = "Thickness"
+   Variable = -dofs 1 "H"
+
+   Exported Variable 1 = -dofs 1 "H Residual"
+   Exported Variable 2 = DhDt
+   Compute DhDt = Logical True
+
+   Procedure = "ElmerIceSolvers" "ThicknessSolver"
+
+  ! Numerical settings;
+   Linear System Solver = Direct
+   Linear System Direct Method = umfpack
+
+   ! require for limitation 
+   Linear System Convergence Tolerance = 1.0e-12
+
+   ! equation is linear if no min/max
+    Nonlinear System Max Iterations = 10
+    Nonlinear System Convergence Tolerance  = 1.0e-09
+!!
+    Stabilization Method = Stabilized
+    Transient Stabilisation = logical true
+    Apply Dirichlet = Logical True
+
+!!  the convection velocity (mean horizontal velocity)
+    Flow Solution Name = String "SSAVelocity"
+End
+!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+! Scalar outpouts for post processing
+!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+Solver 13
+  Exec Solver = After Timestep
+  Equation = "Save 1D Vars"
+    Procedure = File "Scalar_OUTPUT" "Scalar_OUTPUT"
+    Variable = -nooutput "savescal"
+
+   File Name = File "1DVar_OUTPUT_$name$.dat"
+End
+!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+Solver 14
+  Exec Solver = After Timestep
+
+  Equation = "Save Scalars"
+   Procedure = File "SaveData" "SaveScalars"
+
+  Parallel Reduce = logical True
+
+   Filename = File "Scalars_"$name$".dat"
+
+  Variable 1 = "Time"
+
+   Variable 2 = "dhdt"
+   Operator 2 = min
+   Operator 3 = max
+
+  Variable 4 = "H"
+  Operator 4 = "volume"
+  Operator 5 = "int"
+End
+!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+Solver 15
+  Exec Solver = After Timestep
+  
+  Equation = "UpdateExport2"
+  Variable = -nooutput "dumy"
+    Procedure = File "ElmerIceSolvers" "UpdateExport"
+    Optimize Bandwidth = logical false
+
+    Exported Variable 1 = "SSAVelocity Passive"
+    Exported Variable 2 = "H Passive"
+    Exported Variable 3 = "Normal Vector Passive"
+    Exported Variable 4 = "distance1p"
+    Exported Variable 5 = "distance2p"
+    Exported Variable 5 = "distance1n"
+    Exported Variable 6 = "distance2n"
+    Exported Variable 7 = "distance1"
+    Exported Variable 8 = "distance2"
+    Exported Variable 9 = "distance"
+    Exported Variable 10 = "Taub"
+
+End
+
+!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+Equation 1
+  Active Solvers (15)= 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15
+End
+!#####
+Boundary Condition 1
+  Target Boundaries = 1
+
+  Normal-Tangential SSAVelocity = Logical True
+  SSAVelocity 1 = Real 0.0
+
+End
+Boundary Condition 2
+  Target Boundaries = 2
+  Calving Front = Logical True
+End
+
+
+Boundary Condition 3
+  Passive Target = Logical True
+
+  Calving Front = Logical True
+  ComputeNormal = Logical True
+End

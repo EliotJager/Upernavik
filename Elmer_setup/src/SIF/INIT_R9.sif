@@ -1,0 +1,259 @@
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+! Initialise required variables to run the simulations
+!
+! Author: F. Gillet-Chaulet (IGE-Grenoble-FR)
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!#######################################################
+!!# Parameters
+! name of the simulation
+$name="<NAME>"
+! Mesh directory
+$MESH="MESH_0"
+! Minimal ice thickness
+$HMin=0.9
+! Maximal slip coefficient
+$alphaMax=2
+! Data sets to be interpolated on the mesh
+$TOPOGRAPHY_DATA="<TOPO>"
+$FRICTION_DATA="<FRICTION>"
+$VELOCITY_DATA="./DATA/velocity_optic.nc"
+$VISCOSITY_DATA="./DATA/viscosity.nc"
+$SMB_DATA="<SMB>"
+$MASK_NODES="./DATA/Upernavik_IceMask_1985-2019_ls_v2.nc"
+!#######################################################
+include Physical_ParamsES.IN
+!#######################################################
+Header
+  Mesh DB "." "$MESH$"
+End
+!#######################################################
+!#######################################################
+Constants
+  sea level = Real $zsl
+  water density = Real $rhow
+End
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+Simulation
+  Coordinate System  = Cartesian 
+  Simulation Type = Steady State
+
+  Steady State Min Iterations = 1
+  Steady State Max Iterations = 1
+
+  Output File = "$name$.result"
+  Post File = "$name$.vtu"
+  max output level = 3
+End
+!#######################################################
+!#######################################################
+Body 1
+  Equation = 1
+  Material = 1
+  Initial Condition = 1
+  Body Force = 1
+End
+!#######################################################
+!#######################################################
+Initial Condition 1
+! List of variable that must be initialised
+! to run the simulations
+ 
+ ! Topography
+  bedrock = Real 0.0 ! bed elevation
+  H = Real 0.0 ! ice thickness
+  zs_inv = Real 0.0 ! ice thickness used for the inversion
+  zsl = Real $zsl
+  rhow = Real $rhow
+  rhoi = Real $rhoi 
+  zs_inv = Real 0.0 ! ice thickness used for the inversion
+  GroundedMask = Real 0.0 ! grounded/floating mask
+  Zs= Real 0.0 ! top surface elevation
+  Zb= Real 0.0 ! bottom surace elavation
+ ! Linear regression parameters
+  c1 = Real $c1
+  c2 = Real $c2 
+  c3 = Real $c3
+  c4 = Real $c4
+  b_lim = Real $b_lim
+ ! Material parameters
+  slc=Real 0.001 ! slip coefficient
+  alpha=Real -3.0   ! power slip coefficient
+  alpha_anom=Real 0.0   ! power slip coefficient
+  Mu= Real 0.25  ! vertically averaged velocity
+  smb = Real 0.0
+
+End
+!#######################################################
+!#######################################################
+Body Force 1
+! at the end take slipcoef=10^alpha (for post-processing or restart)
+  slc = Variable alpha
+      REAL procedure "ElmerIceUSF" "TenPowerA"
+
+
+End
+!#######################################################
+!#######################################################
+Material 1
+! Material properties
+  SSA Mean Density = Real $rhoi
+  SSA Friction Exponent = Real $m
+End
+!#######################################################
+!#######################################################
+!#######################
+! Read bedrock
+!#######################
+Solver 1
+  Equation = Reader
+    Procedure = "GridDataReader" "GridDataReader"
+    Variable = -nooutput dumy
+
+   Read full array = logical True
+!---- NOTE: File is case sensitive, String is not!
+   Filename = File "$TOPOGRAPHY_DATA$"
+
+   X Dim Name = String "x"
+   Y Dim Name = String "y"
+!--- 
+  Variable 1 = File "bed"
+  Target Variable 1 = String "bedrock"
+
+! exported variables  
+  Exported Variable 1 = bedrock
+  
+End
+!#######################
+! Read thickness
+!#######################
+Solver 2
+  Equation = Reader2
+    Procedure = "Scattered2DDataInterpolator" "Scattered2DDataInterpolator"
+    Variable = -nooutput dumy2
+
+  Variable 1 = File "h"
+  Variable 1 data file = File "$TOPOGRAPHY_DATA$"
+  Variable 1 Valid Min Value  = Real $HMin
+  Target Variable 1  = String "H"
+
+! alpha is better for interpolation
+  Variable 2 = File "alpha"
+  Variable 2 data file = File "$FRICTION_DATA$"
+  Variable 2 Valid Max Value  = Real $alphaMax
+
+  Variable 3 = File "SMB"
+  Variable 3 data file = File "$SMB_DATA$"
+  Target Variable 3 = String "smb"
+  
+  Variable 4 = File "alpha_anom"
+  Variable 4 data file = File "$FRICTION_DATA$"
+
+  Exported Variable 1 = H
+  Exported Variable 2 = alpha
+  Exported Variable 3 = smb
+  Exported Variable 4 = zsl
+  Exported Variable 5 = rhow
+  Exported Variable 6 = rhoi
+  Exported Variable 7 = c1
+  Exported Variable 8 = c2
+  Exported Variable 9 = c3
+  Exported Variable 10 = c4
+  Exported Variable 11 = b_lim
+  Exported Variable 12 = alpha_anom
+End
+
+!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+Solver 3
+
+ Equation = Reader1
+  Procedure = "GridDataReader" "GridDataReader"
+
+!---- 
+  Filename = File "$MASK_NODES$"
+
+!----- Load the whole netcdf array instead of inquiring only the values required 
+!  for the interpolation at the current mesh node
+  Read full array = Logical False
+!---
+  Time Dim Name = String "time"
+  X Dim Name = String "X" 
+  Y Dim Name = String "Y"
+
+  Time Var Name = String "time"
+  X Var Name = String "x" 
+  Y Var Name = String "y"
+
+  !--- Interpolation variables tolerances
+  X Epsilon = Real 1.0e-2 
+  Y Epsilon = Real 1.0e-2 
+  Time Epsilon = Real 0.01
+!--- 
+  Variable 1 = File "ls"
+  Target Variable 1 = String "distance"
+!----
+!  Is Time Counter = Logical True
+  Is Time Index = Logical True
+ Time Point = Real 1.0
+End
+
+!#######################
+! read Mu
+!#######################
+
+!#######################
+Solver 4
+  Equation = Reader5    
+    Procedure = "GridDataReader" "GridDataReader"
+    Variable = -nooutput dumy4
+    
+    Read full array = Logical True
+
+!---- NOTE: File is case sensitive, String is not!
+   Filename = File "$VISCOSITY_DATA$"
+
+   X Dim Name = File "x"
+   Y Dim Name = File "y"
+!--- 
+  Variable 1 = File "Mumean"
+  Target Variable 1 = String "Mu"
+  Exported Variable 1 = Mu
+
+! convert from
+   Interpolation Multiplier = Real $E
+End
+
+!#######################
+! Apply floatation 
+!  - define GroundedMask
+!  - get Zs and Zb from H and bedrock
+!#######################
+
+Solver 5
+   Equation = "Flotation"
+      Variable = GroundedMask
+      Procedure = "ElmerIceSolvers" "Flotation"
+
+   Exported Variable 1 = Zs
+   Exported Variable 2 = Zb
+End
+
+
+!#######################################################
+Solver 6
+  Equation = "UpdateExport"
+   Variable = -nooutput "dumy2"
+    Procedure = File "ElmerIceSolvers" "UpdateExport"
+    Optimize Bandwidth = logical false
+! recompute the slip coef. = 10^alpha (for post-processing or restart)
+  Exported Variable 1 =  slipcoef
+  Exported Variable 2 =  slc
+End
+!#######################################################
+
+!#######################################################
+!#######################################################
+Equation 1
+  Active Solvers(6) = 1 2 3 4 5 6
+End
+
